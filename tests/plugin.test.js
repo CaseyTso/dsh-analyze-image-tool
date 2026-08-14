@@ -9,7 +9,7 @@ import { apply, Config, name, inject } from "../lib/index.js";
 
 /** Build a fake cordis ctx that captures registrations. */
 function fakeCtx({ bytes = Buffer.from([0x89, 0x50, 0x4e, 0x47]), credential = null } = {}) {
-  const state = { tool: null, promptSection: null, effects: [] };
+  const state = { tool: null, promptSection: null, effects: [], fsCalls: [] };
   const ctx = {
     state,
     effect(fn, label) {
@@ -29,7 +29,12 @@ function fakeCtx({ bytes = Buffer.from([0x89, 0x50, 0x4e, 0x47]), credential = n
       },
     },
     fs: {
-      async readBytes(path, _signal, maxBytes) {
+      async resolve(path, opts) {
+        state.fsCalls.push({ op: "resolve", path, signal: opts?.signal });
+        return { targetKey: path, displayPath: path };
+      },
+      async readBytes(target, _signal, maxBytes) {
+        state.fsCalls.push({ op: "readBytes", target, maxBytes });
         if (bytes.byteLength > maxBytes) throw new Error("fs limit exceeded");
         return bytes;
       },
@@ -126,6 +131,13 @@ test("execute analyzes a local image through the fs seam and returns structured 
   assert.equal(result.text, "A login form with two fields.");
   assert.equal(result.model, "Qwen/Qwen3-VL-32B-Instruct");
   assert.equal(result.usage.promptTokens, 5);
+  // The fs seam is addressed by resolved FsTarget, never a raw path string:
+  // resolve() gets the raw path, readBytes() gets the resolved target.
+  const resolveCall = ctx.state.fsCalls.find((call) => call.op === "resolve");
+  assert.equal(resolveCall.path, "/tmp/desktop/shot.png");
+  const readCall = ctx.state.fsCalls.find((call) => call.op === "readBytes");
+  assert.equal(readCall.target.targetKey, "/tmp/desktop/shot.png");
+  assert.equal(readCall.target.displayPath, "/tmp/desktop/shot.png");
   const body = JSON.parse(fetchMock.last.init.body);
   assert.equal(body.messages[0].content[0].image_url.url, "data:image/png;base64,ZmFrZS1wbmctYnl0ZXM=");
   assert.equal(body.messages[0].content[1].text, "Describe it");
