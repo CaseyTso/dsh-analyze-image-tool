@@ -1,0 +1,9 @@
+# analyze-image-tool: registers the `analyze_image` tool (vision bridge to any
+# OpenAI-compatible endpoint) into the host tools registry, so any session whose
+# main model has no vision capability can still read and analyze images.
+#
+# Declared via package.json `dsh.bundle.patch`, this patch is applied
+# automatically when the package is installed with `dsh plugin add`.
+- insert:
+    - id: analyze-image-tool
+      name: analyze-image-tool

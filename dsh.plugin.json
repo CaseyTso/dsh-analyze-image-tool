@@ -1,0 +1,13 @@
+{
+  "id": "analyze-image-tool",
+  "version": "0.1.0",
+  "main": "./lib/index.js",
+  "description": "Vision bridge for text-only DeepSeek Harness models: an analyze_image tool that answers questions about images via any OpenAI-compatible vision/multimodal endpoint",
+  "engines": {
+    "node": ">=18.17"
+  },
+  "contributes": {
+    "tools": ["analyze_image"],
+    "skills": []
+  }
+}

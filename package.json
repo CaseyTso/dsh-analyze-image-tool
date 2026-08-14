@@ -1,0 +1,50 @@
+{
+  "name": "analyze-image-tool",
+  "version": "0.1.0",
+  "description": "A vision bridge for text-only DeepSeek Harness models: registers an `analyze_image` tool that answers questions about images via ANY OpenAI-compatible vision/multimodal endpoint (SiliconFlow, DashScope, Zhipu, OpenRouter, Ollama, ...).",
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "cordis.patch.yml",
+    "README.md",
+    "LICENSE"
+  ],
+  "keywords": [
+    "deepseek-harness",
+    "dsh",
+    "dsh-plugin",
+    "vision",
+    "vlm",
+    "image",
+    "multimodal",
+    "openai-compatible",
+    "ocr"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "dependencies": {
+    "@deepseek-ai/schemastery": "^3.18.1"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": ">=4.0.1",
+    "@deepseek-ai/dsh-tools": ">=0.1.0-rc.6",
+    "@deepseek-ai/dsh-system-prompt": ">=0.1.0-rc.6",
+    "@deepseek-ai/dsh-credentials": ">=0.1.0-rc.6",
+    "@deepseek-ai/dsh-fs-local": ">=0.1.0-rc.6"
+  },
+  "scripts": {
+    "test": "node --test tests/*.test.js"
+  }
+}

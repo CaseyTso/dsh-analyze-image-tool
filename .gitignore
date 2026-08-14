@@ -1,0 +1,12 @@
+# Dependencies and build artifacts
+node_modules/
+*.tgz
+*.log
+
+# OS cruft
+.DS_Store
+Thumbs.db
+
+# Test / coverage output
+coverage/
+.tmp/
