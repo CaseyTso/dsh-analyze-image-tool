@@ -42,7 +42,7 @@ dsh --profile web
     apiKey: ''                                  # 可留空，走下方解析链
     model: Qwen/Qwen3-VL-32B-Instruct           # 端点上的视觉/多模态模型 id
     maxTokens: 2048
-    timeoutMs: 60000
+    timeoutMs: 60000                            # 大图/慢端点可调大，如 120000
     maxImageBytes: 10485760
 ```
 
@@ -67,8 +67,21 @@ dsh --profile web
 
 模型面对图片相关任务时调用 `analyze_image`：
 
-- `path`（必填）：图片的绝对本地路径、http(s) URL 或 data: URL（支持 PNG/JPEG/WebP/GIF/BMP/TIFF/HEIC，默认上限 10MB）。
+- `path`（与 `attachment_id` 二选一）：图片的绝对本地路径、http(s) URL 或 data: URL（支持 PNG/JPEG/WebP/GIF/BMP/TIFF/HEIC，默认上限 10MB）。
+- `attachment_id`（与 `path` 二选一）：粘贴到输入框的图片的附件 ID（形如 `sha256:…`），见下方「粘贴图片识图」。
 - `prompt`（可选）：具体问题，如「逐字提取图中文字」「数一下有几个按钮」「描述布局」。默认是包含全部可见文字的详细描述。
+
+## 粘贴图片识图（composer 图片）
+
+纯文本模型（如 deepseek-v4-flash）本身收不到图片：DSH 会在 `apiproxy` 的 `prompt` 入站门禁就拒绝「图片 + 纯文本模型」的发送（`MODEL_DOES_NOT_SUPPORT_IMAGES`）。这个拦截点在所有插件钩子之前，**纯插件绕不过**。
+
+要让粘贴图片在纯文本模型下也能用，需要配合一个**宿主补丁**（给 DSH 加一个入站内容转换 seam），本插件已内置对应的监听逻辑：
+
+1. **宿主补丁**：在 DSH 的 `apiproxy` `prompt` 处理器里、存图之后、图像门禁之前，加一个 `apiproxy/prompt-content` waterfall。补丁 diff、原始备份与幂等重打脚本放在本仓库外的 `dsh-host-patch/` 目录（决策记录见 `docs/adr/0001`）。
+2. **插件行为**：宿主补丁就位后，纯文本模型下粘贴图片发送时，插件把图片块改写成用户可见文字「用户粘贴了一张图片（附件 ID: sha256:…），要查看请调用 analyze_image(attachment_id=…)」，并把完整附件引用索引进内存。
+3. **模型调用**：模型看到提示后调用 `analyze_image(attachment_id="sha256:…")`，插件经 `ctx.attachments.readImage` 读回字节并转发视觉端点。
+
+> 限制：附件引用索引是进程内的，服务器重启后历史会话里的附件 ID 无法再读回（需重新粘贴）；同一次会话内粘贴 → 发送 → 识图不受影响。
 
 ## 开发
 
