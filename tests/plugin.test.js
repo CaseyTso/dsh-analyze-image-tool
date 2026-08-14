@@ -9,12 +9,16 @@ import { apply, Config, name, inject } from "../lib/index.js";
 
 /** Build a fake cordis ctx that captures registrations. */
 function fakeCtx({ bytes = Buffer.from([0x89, 0x50, 0x4e, 0x47]), credential = null } = {}) {
-  const state = { tool: null, promptSection: null, effects: [], fsCalls: [] };
+  const state = { tool: null, promptSection: null, effects: [], fsCalls: [], listeners: {} };
   const ctx = {
     state,
     effect(fn, label) {
       state.effects.push(label);
       return fn();
+    },
+    on(name, cb) {
+      state.listeners[name] = cb;
+      return () => {};
     },
     tools: {
       register(definition) {
@@ -26,6 +30,11 @@ function fakeCtx({ bytes = Buffer.from([0x89, 0x50, 0x4e, 0x47]), credential = n
       section(entry) {
         state.promptSection = entry;
         return () => {};
+      },
+    },
+    attachments: {
+      async readImage(ref, _signal) {
+        return { ref, data: new Uint8Array(Buffer.from("attachment-bytes")) };
       },
     },
     fs: {
@@ -74,6 +83,7 @@ test("exports the expected plugin metadata", () => {
   assert.ok(inject.includes("systemPrompt"));
   assert.ok(inject.includes("fs"));
   assert.ok(inject.includes("credentials"));
+  assert.ok(inject.includes("attachments"));
 });
 
 test("Config carries documented defaults", () => {
@@ -111,7 +121,8 @@ test("apply registers an object-rooted, safely declared analyze_image tool", () 
   // exactly the safe form that guards the #297 tool-schema crash.
   assert.equal(tool.parameters.type, "object");
   assert.equal(tool.parameters.properties.path.type, "string");
-  assert.ok(tool.parameters.required.includes("path"));
+  assert.equal(tool.parameters.properties.attachment_id.type, "string");
+  assert.ok(!(tool.parameters.required ?? []).includes("path"), "path is optional now (attachment_id is the composer-image alternative)");
   assert.equal(tool.parameters.properties.prompt.type, "string");
   // Output schema root must be a proper JSON Schema object.
   assert.equal(tool.output.schema.type, "object");
@@ -191,10 +202,17 @@ test("execute allows keyless local endpoints", async () => {
   assert.equal(fetchMock.last.init.headers.authorization, undefined);
 });
 
-test("execute requires path and reports read failures", async () => {
+test("execute requires path or attachment_id and reports read failures", async () => {
   const ctx = fakeCtx();
   apply(ctx, { apiKey: "sk-x" });
-  await assert.rejects(() => ctx.state.tool.execute({ path: "" }, { signal: undefined }), /path is required/);
+  await assert.rejects(
+    () => ctx.state.tool.execute({ path: "" }, { signal: undefined }),
+    /provide either `path` or `attachment_id`/,
+  );
+  await assert.rejects(
+    () => ctx.state.tool.execute({ path: "/a.png", attachment_id: "sha256:x" }, { signal: undefined }),
+    /provide only one of `path` or `attachment_id`/,
+  );
 
   const badCtx = fakeCtx();
   badCtx.fs.readBytes = async () => {
@@ -205,6 +223,53 @@ test("execute requires path and reports read failures", async () => {
     () => badCtx.state.tool.execute({ path: "/blocked/x.png" }, { signal: undefined }),
     /cannot read image "\/blocked\/x.png": sandbox denied/,
   );
+});
+
+test("inbound transform rewrites composer images for a text-only model and indexes the ref", () => {
+  const ctx = fakeCtx();
+  apply(ctx, { apiKey: "sk-x" });
+  const listener = ctx.state.listeners["apiproxy/prompt-content"];
+  assert.ok(listener, "inbound transform listener must be registered");
+  const payload = {
+    content: [
+      { type: "text", text: "看看这张图" },
+      { type: "image", attachment: { attachmentId: "sha256:abc123", mediaType: "image/png", bytes: 4, width: 1, height: 1 } },
+    ],
+    modelInfo: { inputModalities: ["text"] },
+  };
+  let nextCalled = false;
+  listener(payload, () => { nextCalled = true; });
+  assert.equal(nextCalled, true);
+  assert.equal(payload.content.length, 2);
+  assert.equal(payload.content[0].type, "text");
+  assert.equal(payload.content[1].type, "text");
+  assert.match(payload.content[1].text, /sha256:abc123/);
+});
+
+test("inbound transform leaves image blocks alone for a vision-capable model", () => {
+  const ctx = fakeCtx();
+  apply(ctx, { apiKey: "sk-x" });
+  const listener = ctx.state.listeners["apiproxy/prompt-content"];
+  const imageBlock = { type: "image", attachment: { attachmentId: "sha256:v", mediaType: "image/png", bytes: 4, width: 1, height: 1 } };
+  const payload = { content: [imageBlock], modelInfo: { inputModalities: ["text", "image"] } };
+  let nextCalled = false;
+  listener(payload, () => { nextCalled = true; });
+  assert.equal(nextCalled, true);
+  assert.equal(payload.content[0], imageBlock, "vision model keeps the raw image block");
+});
+
+test("execute reads a composer-pasted image by attachment_id", async () => {
+  const ctx = fakeCtx();
+  apply(ctx, { apiKey: "sk-x" });
+  // Populate the ref index the same way the inbound transform does.
+  const listener = ctx.state.listeners["apiproxy/prompt-content"];
+  const ref = { attachmentId: "sha256:pasted", mediaType: "image/png", bytes: 16, width: 1, height: 1 };
+  listener({ content: [{ type: "image", attachment: ref }], modelInfo: { inputModalities: ["text"] } }, () => {});
+  fetchMock(() => okResponse("pasted image answer"));
+  const result = await ctx.state.tool.execute({ attachment_id: "sha256:pasted" }, { signal: undefined });
+  assert.equal(result.text, "pasted image answer");
+  const body = JSON.parse(fetchMock.last.init.body);
+  assert.match(body.messages[0].content[0].image_url.url, /^data:image\/png;base64,/);
 });
 
 test("execute falls back to plain fs resolution when the host has no fs seam", async () => {
