@@ -20,6 +20,22 @@ _Avoid_: route gate, modality check
 The plugin's runtime wrapper around `apiProxy.sessions.prompt` that persists pasted images and rewrites them into text notes carrying the attachment id for text-only models.
 _Avoid_: inbound transform, prompt seam wrapper
 
+**Settings panel**:
+The dock popup opened from the eye button that edits the plugin's vision-endpoint and prompt settings and runs the connectivity test.
+_Avoid_: settings page, config dialog
+
+**Composer note template**:
+The configurable text that replaces a pasted image block for text-only models, supporting `{attachment_id}` and `{image_index}` placeholders.
+_Avoid_: paste prompt, image placeholder text
+
+**Connectivity test**:
+A real `chat/completions` call with a 1x1 test image that verifies the configured vision endpoint end to end.
+_Avoid_: endpoint ping, model list check
+
+**Client plugin half**:
+The browser-side part of a dsh plugin declared via `dsh.client`, loaded by the web shell to render UI in slots.
+_Avoid_: frontend plugin, browser bundle
+
 **Vision endpoint**:
 An OpenAI-compatible multimodal API identified by a baseURL, a model id, and an apiKey.
 _Avoid_: VLM backend, OCR service

@@ -1,0 +1,3 @@
+# Settings and connectivity test live in a client-plugin panel, not the system settings page
+
+The plugin's settings UI is a browser client-plugin half mounted as an eye button in `conversation.session.header.actions`, not a section in the dsh system settings page. The system settings page has no public slot for client plugins, and a host-side settings namespace is not exposed there unless the host's `exposedNamespaces()` allowlist is patched. A client-plugin popover — the pattern used by dsh-balance-meter and dsh-opencode-go-usage — gives the plugin full control over fields and actions (including the connectivity-test button) while keeping the install host-patch-free. The settings themselves still persist through `ctx.settings`.

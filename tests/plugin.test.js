@@ -7,12 +7,94 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { apply, Config, name, inject } from "../lib/index.js";
 
+/** Deep merge two plain JSON objects (settings layering semantics). */
+function deepMerge(base, patch) {
+  const out = { ...base };
+  for (const [key, value] of Object.entries(patch)) {
+    if (
+      value !== null &&
+      typeof value === "object" &&
+      !Array.isArray(value) &&
+      base[key] !== null &&
+      typeof base[key] === "object" &&
+      !Array.isArray(base[key])
+    ) {
+      out[key] = deepMerge(base[key], value);
+    } else {
+      out[key] = value;
+    }
+  }
+  return out;
+}
+
+/** Build a fake settings service that resolves schema(base ⊕ section). */
+function fakeSettingsService(initialSection = {}) {
+  const state = { section: { ...initialSection }, watchers: [], registrations: new Map() };
+  const service = {
+    register(ns, schema, options) {
+      const registration = { ns, schema, base: options?.base ?? {} };
+      state.registrations.set(ns, registration);
+      return {
+        get: () => registration.schema(deepMerge(registration.base, state.section)),
+        watch(callback) {
+          state.watchers.push(callback);
+          return () => {};
+        },
+      };
+    },
+    get(ns) {
+      const registration = state.registrations.get(ns);
+      if (registration === undefined) return undefined;
+      return registration.schema(deepMerge(registration.base, state.section));
+    },
+    async update(ns, patch) {
+      state.section = deepMerge(state.section, patch);
+      const value = service.get(ns);
+      for (const callback of state.watchers) callback(value, undefined);
+      return value;
+    },
+    async mutate(ns, ops) {
+      for (const op of ops) {
+        if (op.op !== "unset" || !Array.isArray(op.path) || op.path.length === 0) continue;
+        let target = state.section;
+        for (let index = 0; index < op.path.length - 1; index += 1) {
+          const key = op.path[index];
+          if (target[key] === null || typeof target[key] !== "object") {
+            target = null;
+            break;
+          }
+          target = target[key];
+        }
+        if (target !== null) delete target[op.path[op.path.length - 1]];
+      }
+      const value = service.get(ns);
+      for (const callback of state.watchers) callback(value, undefined);
+      return value;
+    },
+  };
+  return service;
+}
+
+/** Build a fake webserver that captures registered routes. */
+function fakeWebServer() {
+  const routes = [];
+  return {
+    routes,
+    register(route) {
+      routes.push(route);
+      return () => {};
+    },
+  };
+}
+
 /** Build a fake cordis ctx that captures registrations. */
 function fakeCtx({
   bytes = Buffer.from([0x89, 0x50, 0x4e, 0x47]),
   credential = null,
   apiProxy = undefined,
   llmInfo = undefined,
+  settings = undefined,
+  webServer = undefined,
 } = {}) {
   const state = { tool: null, promptSection: null, effects: [], fsCalls: [], listeners: {} };
   const services = {
@@ -21,11 +103,19 @@ function fakeCtx({
       llmInfo === undefined
         ? undefined
         : { async resolveModelInfo() { return llmInfo; } },
+    settings,
+    webServer,
   };
   const ctx = {
     state,
     get(name) {
       return services[name];
+    },
+    inject(names, callback) {
+      if (names.some((name) => services[name] === undefined)) return;
+      const child = { ...ctx };
+      for (const name of names) child[name] = services[name];
+      callback(child);
     },
     effect(fn, label) {
       state.effects.push(label);
@@ -102,6 +192,41 @@ const okResponse = (content) => ({
     });
   },
 });
+
+/** Minimal ServerResponse fake for exercising registered HTTP handlers. */
+function fakeRes() {
+  const res = {
+    statusCode: 0,
+    body: "",
+    headers: {},
+    writeHead(status, headers) {
+      res.statusCode = status;
+      Object.assign(res.headers, headers);
+    },
+    end(body) {
+      res.body = typeof body === "string" ? body : "";
+    },
+  };
+  return res;
+}
+
+/** Minimal IncomingMessage fake for the route's body reader. */
+function fakeReq(method, body) {
+  const handlers = {};
+  const req = {
+    method,
+    on(event, callback) {
+      handlers[event] = callback;
+      return req;
+    },
+    destroy() {},
+  };
+  queueMicrotask(() => {
+    if (body !== undefined && body !== null) handlers.data?.(Buffer.from(body));
+    handlers.end?.();
+  });
+  return req;
+}
 
 test("exports the expected plugin metadata", () => {
   assert.equal(name, "analyze-image-tool");
@@ -422,6 +547,176 @@ test("composer-image bridge falls back to the host path when attachment save fai
   // The wrapper caught the storage failure and left the original content alone
   // so the host's own validation/error path can handle it.
   assert.equal(lastRequest.request.payload.content[0], rawImage);
+});
+
+test("settings API exposes masked settings and accepts updates", async () => {
+  const settings = fakeSettingsService();
+  const webServer = fakeWebServer();
+  const ctx = fakeCtx({ settings, webServer });
+  apply(ctx, { apiKey: "sk-super-secret-123", baseURL: "https://vlm.example/v1", model: "vision-pro" });
+
+  const route = webServer.routes.find((candidate) => candidate.path === "/api/analyze-image-tool/settings");
+  assert.ok(route, "settings route must be registered");
+
+  const readRes = fakeRes();
+  await route.handler(fakeReq("GET"), readRes);
+  const readView = JSON.parse(readRes.body);
+  assert.equal(readView.ok, true);
+  assert.equal(readView.baseURL, "https://vlm.example/v1");
+  assert.equal(readView.apiKeySet, true);
+  assert.equal(readView.apiKeyMasked.includes("sk-super-secret-123"), false, "apiKey must be masked");
+
+  const writeRes = fakeRes();
+  await route.handler(fakeReq("POST", JSON.stringify({ model: "qwen3-vl:4b", baseURL: "http://localhost:11434/v1" })), writeRes);
+  const writeView = JSON.parse(writeRes.body);
+  assert.equal(writeView.ok, true);
+  assert.equal(writeView.model, "qwen3-vl:4b");
+  assert.equal(writeView.baseURL, "http://localhost:11434/v1");
+
+  const readBackRes = fakeRes();
+  await route.handler(fakeReq("GET"), readBackRes);
+  const readBackView = JSON.parse(readBackRes.body);
+  assert.equal(readBackView.model, "qwen3-vl:4b");
+});
+
+test("settings API saves, switches, and deletes profiles", async () => {
+  const settings = fakeSettingsService();
+  const webServer = fakeWebServer();
+  const ctx = fakeCtx({ settings, webServer });
+  apply(ctx, { apiKey: "sk-default", baseURL: "https://vlm.example/v1", model: "vision-pro" });
+
+  const route = webServer.routes.find((candidate) => candidate.path === "/api/analyze-image-tool/settings");
+
+  // The base config shows up as the default profile.
+  const readRes = fakeRes();
+  await route.handler(fakeReq("GET"), readRes);
+  const initialView = JSON.parse(readRes.body);
+  assert.equal(initialView.activeProfile, "default");
+  assert.ok(initialView.profiles.some((profile) => profile.id === "default"));
+
+  // Save the current form as a new profile.
+  const saveRes = fakeRes();
+  await route.handler(fakeReq("POST", JSON.stringify({
+    mode: "saveProfile",
+    profileId: "ollama",
+    profileName: "本地 Ollama",
+    profile: {
+      baseURL: "http://localhost:11434/v1",
+      model: "qwen3-vl:4b",
+      maxTokens: 4096,
+      timeoutMs: 120000,
+      maxImageBytes: 10485760,
+      defaultQuestion: "What is this?",
+      composerNoteTemplate: "第 {image_index} 张，附件 {attachment_id}",
+    },
+  })), saveRes);
+  const saveView = JSON.parse(saveRes.body);
+  assert.equal(saveView.ok, true);
+  assert.equal(saveView.activeProfile, "ollama");
+  assert.equal(saveView.baseURL, "http://localhost:11434/v1");
+  assert.equal(saveView.model, "qwen3-vl:4b");
+  // The current key was preserved into the profile when no new key was typed.
+  assert.equal(saveView.apiKeySet, true, "current key should be preserved when saving profile without retyping");
+  assert.ok(saveView.profiles.some((profile) => profile.id === "ollama" && profile.apiKeySet === true));
+
+  // Switch back to default.
+  const switchRes = fakeRes();
+  await route.handler(fakeReq("POST", JSON.stringify({ mode: "switchProfile", profileId: "default" })), switchRes);
+  const switchView = JSON.parse(switchRes.body);
+  assert.equal(switchView.ok, true);
+  assert.equal(switchView.activeProfile, "default");
+  assert.equal(switchView.baseURL, "https://vlm.example/v1");
+  assert.equal(switchView.model, "vision-pro");
+
+  // Update an existing profile without changing the live config.
+  const updateRes = fakeRes();
+  await route.handler(fakeReq("POST", JSON.stringify({
+    mode: "updateProfile",
+    profileId: "ollama",
+    profileName: "本地 Ollama 8B",
+    profile: {
+      baseURL: "http://localhost:11434/v1",
+      model: "qwen3-vl:8b",
+      maxTokens: 8192,
+      timeoutMs: 120000,
+      maxImageBytes: 10485760,
+      defaultQuestion: "What is this?",
+      composerNoteTemplate: "第 {image_index} 张，附件 {attachment_id}",
+    },
+  })), updateRes);
+  const updateView = JSON.parse(updateRes.body);
+  assert.equal(updateView.ok, true);
+  assert.equal(updateView.activeProfile, "default", "updateProfile must not switch the active profile");
+  assert.equal(updateView.baseURL, "https://vlm.example/v1", "updateProfile must not touch the live flat config");
+  const updatedProfile = updateView.profiles.find((profile) => profile.id === "ollama");
+  assert.ok(updatedProfile, "updated profile must still exist");
+  assert.equal(updatedProfile.name, "本地 Ollama 8B");
+  assert.equal(updatedProfile.model, "qwen3-vl:8b");
+  assert.equal(updatedProfile.apiKeySet, true, "updateProfile must preserve the selected profile's key");
+
+  // Delete the inactive profile.
+  const deleteRes = fakeRes();
+  await route.handler(fakeReq("POST", JSON.stringify({ mode: "deleteProfile", profileId: "ollama" })), deleteRes);
+  const deleteView = JSON.parse(deleteRes.body);
+  assert.equal(deleteView.ok, true);
+  assert.equal(deleteView.profiles.some((profile) => profile.id === "ollama"), false);
+
+  // Deleting the active profile is refused.
+  const refuseRes = fakeRes();
+  await route.handler(fakeReq("POST", JSON.stringify({ mode: "deleteProfile", profileId: "default" })), refuseRes);
+  const refuseView = JSON.parse(refuseRes.body);
+  assert.equal(refuseView.ok, false);
+});
+
+test("execute uses settings updated through the panel and honors defaultQuestion", async () => {
+  const settings = fakeSettingsService();
+  const ctx = fakeCtx({ settings });
+  apply(ctx, { apiKey: "sk-old", baseURL: "https://vlm.example/v1", model: "vision-pro" });
+
+  await settings.update("analyze-image-tool", {
+    baseURL: "http://localhost:11434/v1",
+    model: "qwen3-vl:4b",
+    apiKey: "sk-new",
+    defaultQuestion: "What is shown?",
+  });
+
+  fetchMock(() => okResponse("settings answer"));
+  const result = await ctx.state.tool.execute({ path: "https://example.com/a.png" }, { signal: undefined });
+  assert.equal(result.text, "settings answer");
+  assert.equal(fetchMock.last.url, "http://localhost:11434/v1/chat/completions");
+  const body = JSON.parse(fetchMock.last.init.body);
+  assert.equal(body.model, "qwen3-vl:4b");
+  assert.equal(body.messages[0].content[1].text, "What is shown?");
+});
+
+test("composer bridge renders the configured template with image_index", async () => {
+  const settings = fakeSettingsService({
+    composerNoteTemplate: "第 {image_index} 张，附件 {attachment_id}",
+  });
+  const sessions = {
+    async models() {
+      return { result: { ok: true, value: { current: { provider: "deepseek", model: "deepseek-chat" } } } };
+    },
+    async prompt(request) {
+      lastComposerRequest.request = request;
+      return { result: { ok: true, value: { accepted: true } } };
+    },
+  };
+  const lastComposerRequest = {};
+  const ctx = fakeCtx({ settings, apiProxy: { sessions }, llmInfo: { inputModalities: ["text"] } });
+  apply(ctx, {});
+
+  const rawImage = {
+    type: "image",
+    mediaType: "image/png",
+    data: Buffer.from("paste-bytes").toString("base64"),
+  };
+  await sessions.prompt({ payload: { sessionId: "s1", mode: "queue", content: [rawImage, rawImage] } });
+
+  const delivered = lastComposerRequest.request.payload.content;
+  assert.equal(delivered.length, 2);
+  assert.match(delivered[0].text, /^第 1 张，附件 sha256:/);
+  assert.match(delivered[1].text, /^第 2 张，附件 sha256:/);
 });
 
 test("execute falls back to plain fs resolution when the host has no fs seam", async () => {

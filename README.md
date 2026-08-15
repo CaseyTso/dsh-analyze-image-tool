@@ -19,6 +19,7 @@ Vision bridge for text-only DeepSeek Harness models: registers an `analyze_image
 - **健壮性**：API key 在报错信息中自动脱敏；思考型模型的 `<think>` 推理块自动剥离；`<think>` 独占响应当作「仅推理无答案」处理并给出可操作提示。
 - **结构化返回**：`{ text, model, usage }`，附带端点的模型 id 与 token 用量。
 - **多插件共存**：工具名 `analyze_image` 与社区的 `view_image` / `see_image` / `vision_glance` 等不冲突，可与 [dsh-image-bridge](https://github.com/deepseek-ai/deepseek-harness/discussions/733) 之类的粘贴桥接补丁搭配使用。
+- **WebUI 设置面板**：web 会话头部右上角有一个小眼睛按钮，点开即可编辑全部设置（baseURL / apiKey / model / 调用参数 / 提示词模板）、保存/切换多套配置方案，并内置「测试连通性」。
 
 ## 安装
 
@@ -36,7 +37,7 @@ dsh --profile web
 
 ## 配置
 
-在 profile 的 `cordis.patch.yml` 里针对插件 id 配置（或在设置界面/环境变量配置）：
+可以在 webui 的小眼睛面板里改（推荐），也可以在 profile 的 `cordis.patch.yml` 里针对插件 id 配置：
 
 ```yaml
 - id: analyze-image-tool
@@ -47,7 +48,11 @@ dsh --profile web
     maxTokens: 2048
     timeoutMs: 60000                            # 大图/慢端点可调大，如 120000
     maxImageBytes: 10485760
+    defaultQuestion: Describe this image thoroughly. Include any visible text verbatim, the overall layout, and notable details.
+    composerNoteTemplate: 用户在这条消息里粘贴了一张图片（附件 ID: {attachment_id}）。要查看图片内容，请调用 analyze_image 并传入该附件 ID（attachment_id 参数）。
 ```
+
+`composerNoteTemplate` 支持 `{attachment_id}` 与 `{image_index}` 两个占位符。
 
 ### 端点示例（都是同一套配置，任选）
 
@@ -61,10 +66,26 @@ dsh --profile web
 
 ### API key 解析链（按顺序）
 
-1. 插件配置 `apiKey`
-2. 环境变量 `VISION_API_KEY`，其次 `SILICONFLOW_API_KEY`（可写入 `~/.dsh/.env` 或导出）
-3. dsh 凭据通道（`VISION_API_KEY`，其次 `SILICONFLOW_API_KEY`）
-4. 本地端点（localhost）无需 key
+1. webui 面板里保存的 `apiKey`（`ctx.settings` 用户层）
+2. 插件配置 `apiKey`（`cordis.patch.yml`）
+3. 环境变量 `VISION_API_KEY`，其次 `SILICONFLOW_API_KEY`（可写入 `~/.dsh/.env` 或导出）
+4. dsh 凭据通道（`VISION_API_KEY`，其次 `SILICONFLOW_API_KEY`）
+5. 本地端点（localhost）无需 key
+
+> 面板里 apiKey 留空 = 不覆盖，继续走后续解析链。
+
+## WebUI 设置面板
+
+web 会话头部右上角有一个小眼睛按钮（`analyze-image-tool`）。点开后可以：
+
+- 编辑 `baseURL` / `apiKey` / `model` / `maxTokens` / `timeoutMs` / `maxImageBytes`
+- 编辑 `defaultQuestion`（模型调用 `analyze_image` 未带 `prompt` 时的默认提问）
+- 编辑 `composerNoteTemplate`（粘贴图片改写成文字的模板，支持 `{attachment_id}` 和 `{image_index}`）
+- 保存多套配置方案：给当前配置起名保存，之后在下拉框里选中并一键切换；默认方案来自 `cordis.patch.yml`
+- 点击「测试连通性」：用一张 64x64 测试图走真实 `chat/completions` 请求，验证当前端点与模型是否可用
+- 「保存」后即时生效，无需重启
+
+面板读写走插件自带的 HTTP API（`/api/analyze-image-tool/settings`、`/api/analyze-image-tool/test`），并持久化到 dsh 的 `ctx.settings` 用户设置中。
 
 ## 工具说明
 
