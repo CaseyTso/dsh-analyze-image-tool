@@ -27,7 +27,7 @@
 
 ```sh
 # 从 main 分支安装（包含粘贴图片运行时桥接；正式发布后也可换成对应 tag）
-dsh plugin --profile web add github:CaseyTso/analyze_image_tool#main
+dsh plugin --profile web add github:CaseyTso/dsh-analyze-image-tool#main
 dsh --profile web
 ```
 

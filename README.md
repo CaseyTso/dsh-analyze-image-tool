@@ -27,7 +27,7 @@ Requires: DeepSeek Harness (`dsh`) 0.1.x, Node.js ≥ 18.17.
 
 ```sh
 # Install from main branch (includes runtime bridge for pasted images; switch to matching tag after release)
-dsh plugin --profile web add github:CaseyTso/analyze_image_tool#main
+dsh plugin --profile web add github:CaseyTso/dsh-analyze-image-tool#main
 dsh --profile web
 ```
 
