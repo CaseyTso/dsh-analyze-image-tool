@@ -2,9 +2,11 @@
 // analyze-image-tool prepare script
 // dsh plugin add via github: fetches source; this script ensures lib/ exists.
 // lib/index.js is already committed — no build step needed for this plugin.
-const fs = require('fs');
-const path = require('path');
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
 
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const libDir = path.join(__dirname, 'lib');
 if (!fs.existsSync(libDir)) {
   console.error('[analyze-image-tool] ERROR: lib/ directory not found. Did you forget to commit built output?');
