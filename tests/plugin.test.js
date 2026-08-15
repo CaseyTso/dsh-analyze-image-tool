@@ -661,11 +661,50 @@ test("settings API saves, switches, and deletes profiles", async () => {
   assert.equal(deleteView.ok, true);
   assert.equal(deleteView.profiles.some((profile) => profile.id === "ollama"), false);
 
-  // Deleting the active profile is refused.
+  // Deleting the default profile is refused.
   const refuseRes = fakeRes();
   await route.handler(fakeReq("POST", JSON.stringify({ mode: "deleteProfile", profileId: "default" })), refuseRes);
   const refuseView = JSON.parse(refuseRes.body);
   assert.equal(refuseView.ok, false);
+});
+
+test("deleting the active profile switches to default first", async () => {
+  const settings = fakeSettingsService();
+  const webServer = fakeWebServer();
+  const ctx = fakeCtx({ settings, webServer });
+  apply(ctx, { apiKey: "sk-default", baseURL: "https://vlm.example/v1", model: "vision-pro" });
+
+  const route = webServer.routes.find((candidate) => candidate.path === "/api/analyze-image-tool/settings");
+
+  // Make "ollama" the active profile.
+  const saveRes = fakeRes();
+  await route.handler(fakeReq("POST", JSON.stringify({
+    mode: "saveProfile",
+    profileId: "ollama",
+    profileName: "本地 Ollama",
+    profile: {
+      baseURL: "http://localhost:11434/v1",
+      model: "qwen3-vl:4b",
+      maxTokens: 4096,
+      timeoutMs: 120000,
+      maxImageBytes: 10485760,
+      defaultQuestion: "What is this?",
+      composerNoteTemplate: "第 {image_index} 张，附件 {attachment_id}",
+    },
+  })), saveRes);
+  const saveView = JSON.parse(saveRes.body);
+  assert.equal(saveView.ok, true);
+  assert.equal(saveView.activeProfile, "ollama");
+
+  // Delete the active profile: host should fall back to default and delete it.
+  const deleteRes = fakeRes();
+  await route.handler(fakeReq("POST", JSON.stringify({ mode: "deleteProfile", profileId: "ollama" })), deleteRes);
+  const deleteView = JSON.parse(deleteRes.body);
+  assert.equal(deleteView.ok, true);
+  assert.equal(deleteView.activeProfile, "default");
+  assert.equal(deleteView.baseURL, "https://vlm.example/v1");
+  assert.equal(deleteView.model, "vision-pro");
+  assert.equal(deleteView.profiles.some((profile) => profile.id === "ollama"), false);
 });
 
 test("execute uses settings updated through the panel and honors defaultQuestion", async () => {
