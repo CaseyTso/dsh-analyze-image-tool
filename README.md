@@ -25,9 +25,12 @@ Vision bridge for text-only DeepSeek Harness models: registers an `analyze_image
 要求：DeepSeek Harness（`dsh`）0.1.x，Node.js ≥ 18.17。
 
 ```sh
-dsh plugin --profile web add github:CaseyTso/analyze_image_tool#v0.1.0
+# 从 main 分支安装（包含粘贴图片运行时桥接；正式发布后也可换成对应 tag）
+dsh plugin --profile web add github:CaseyTso/analyze_image_tool#main
 dsh --profile web
 ```
+
+> 注意：仓库里的 `v0.1.0` tag 是早期版本，只支持本地路径/URL 识图，不含本次的粘贴图片桥接。
 
 包内 `package.json` 声明了 `dsh.bundle.patch`，安装后会自动作为 profile 层生效，无需手工编辑 `cordis.patch.yml`。
 
@@ -73,13 +76,15 @@ dsh --profile web
 
 ## 粘贴图片识图（composer 图片）
 
-纯文本模型（如 deepseek-v4-flash）本身收不到图片：DSH 会在 `apiproxy` 的 `prompt` 入站门禁就拒绝「图片 + 纯文本模型」的发送（`MODEL_DOES_NOT_SUPPORT_IMAGES`）。这个拦截点在所有插件钩子之前，**纯插件绕不过**。
+纯文本模型（如 deepseek-v4-flash）本身收不到图片：DSH 会在 `apiproxy` 的 `prompt` 入站门禁就拒绝「图片 + 纯文本模型」的发送（`MODEL_DOES_NOT_SUPPORT_IMAGES`）。这个拦截点位于所有插件钩子之前。
 
-要让粘贴图片在纯文本模型下也能用，需要配合一个**宿主补丁**（给 DSH 加一个入站内容转换 seam），本插件已内置对应的监听逻辑：
+**本插件现在内置了运行时桥接，装上即可识别对话框粘贴的图片**（无需再打宿主补丁）：
 
-1. **宿主补丁**：在 DSH 的 `apiproxy` `prompt` 处理器里、存图之后、图像门禁之前，加一个 `apiproxy/prompt-content` waterfall。补丁 diff、原始备份与幂等重打脚本放在本仓库外的 `dsh-host-patch/` 目录（决策记录见 `docs/adr/0001`）。
-2. **插件行为**：宿主补丁就位后，纯文本模型下粘贴图片发送时，插件把图片块改写成用户可见文字「用户粘贴了一张图片（附件 ID: sha256:…），要查看请调用 analyze_image(attachment_id=…)」，并把完整附件引用索引进内存。
+1. **包装 API 网关**：插件在 web profile 中加载时，会包装 `apiProxy.sessions.prompt`。发送含图片的消息时，先通过 `session.models` 取当前会话模型，再经 `ctx.llm.resolveModelInfo` 判断其是否支持图片输入。
+2. **纯文本模型改写图片块**：若当前模型不支持图片，插件把每张图片按宿主同一套附件策略（`validateImage` → `saveImage`）持久化，然后把图片块改写成用户可见文字「用户粘贴了一张图片（附件 ID: sha256:…），要查看请调用 analyze_image(attachment_id=…)」，并把完整附件引用索引进内存。视觉模型则完全不经过改写，原生收图。
 3. **模型调用**：模型看到提示后调用 `analyze_image(attachment_id="sha256:…")`，插件经 `ctx.attachments.readImage` 读回字节并转发视觉端点。
+
+**兼容旧的宿主补丁**：如果宿主已经打过 `apiproxy/prompt-content` seam 补丁，本插件仍保留该 seam 的监听逻辑；由于运行时桥接先于 seam 运行，两条路径不会重复改写，宿主补丁成为后备路径（旧方案见 `docs/adr/0001`，运行时桥接决策见 `docs/adr/0002`）。
 
 > 限制：附件引用索引是进程内的，服务器重启后历史会话里的附件 ID 无法再读回（需重新粘贴）；同一次会话内粘贴 → 发送 → 识图不受影响。
 

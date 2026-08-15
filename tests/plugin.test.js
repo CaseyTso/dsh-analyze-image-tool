@@ -8,10 +8,25 @@ import assert from "node:assert/strict";
 import { apply, Config, name, inject } from "../lib/index.js";
 
 /** Build a fake cordis ctx that captures registrations. */
-function fakeCtx({ bytes = Buffer.from([0x89, 0x50, 0x4e, 0x47]), credential = null } = {}) {
+function fakeCtx({
+  bytes = Buffer.from([0x89, 0x50, 0x4e, 0x47]),
+  credential = null,
+  apiProxy = undefined,
+  llmInfo = undefined,
+} = {}) {
   const state = { tool: null, promptSection: null, effects: [], fsCalls: [], listeners: {} };
+  const services = {
+    apiProxy,
+    llm:
+      llmInfo === undefined
+        ? undefined
+        : { async resolveModelInfo() { return llmInfo; } },
+  };
   const ctx = {
     state,
+    get(name) {
+      return services[name];
+    },
     effect(fn, label) {
       state.effects.push(label);
       return fn();
@@ -33,6 +48,17 @@ function fakeCtx({ bytes = Buffer.from([0x89, 0x50, 0x4e, 0x47]), credential = n
       },
     },
     attachments: {
+      async validateImage(_input) {},
+      async saveImage(input) {
+        return {
+          attachmentId: `sha256:${Buffer.from(input.data).toString("hex")}`,
+          mediaType: input.mediaType,
+          bytes: input.data.byteLength,
+          width: 1,
+          height: 1,
+          ...(input.name === undefined ? {} : { name: input.name }),
+        };
+      },
       async readImage(ref, _signal) {
         return { ref, data: new Uint8Array(Buffer.from("attachment-bytes")) };
       },
@@ -270,6 +296,132 @@ test("execute reads a composer-pasted image by attachment_id", async () => {
   assert.equal(result.text, "pasted image answer");
   const body = JSON.parse(fetchMock.last.init.body);
   assert.match(body.messages[0].content[0].image_url.url, /^data:image\/png;base64,/);
+});
+
+test("composer-image bridge rewrites raw pasted images for text-only models", async () => {
+  const rawImage = {
+    type: "image",
+    mediaType: "image/png",
+    data: Buffer.from("paste-bytes").toString("base64"),
+  };
+  const lastRequest = {};
+  const sessions = {
+    async models({ payload }) {
+      assert.equal(payload.sessionId, "s1");
+      return { result: { ok: true, value: { current: { provider: "deepseek", model: "deepseek-chat" } } } };
+    },
+    async prompt(request) {
+      lastRequest.request = request;
+      return { result: { ok: true, value: { accepted: true } } };
+    },
+  };
+  const originalPrompt = sessions.prompt;
+  const ctx = fakeCtx({ apiProxy: { sessions }, llmInfo: { inputModalities: ["text"] } });
+  apply(ctx, { apiKey: "sk-x" });
+
+  assert.notEqual(sessions.prompt, originalPrompt, "api-proxy prompt must be wrapped");
+  await sessions.prompt({
+    payload: {
+      sessionId: "s1",
+      mode: "queue",
+      content: [{ type: "text", text: "看看这张图" }, rawImage],
+    },
+  });
+
+  const delivered = lastRequest.request.payload.content;
+  assert.equal(delivered.length, 2);
+  assert.equal(delivered[0].type, "text");
+  assert.equal(delivered[1].type, "text");
+  assert.match(delivered[1].text, /sha256:/);
+
+  // The saved attachment is indexed and can be read back by the tool.
+  const attachmentId = `sha256:${Buffer.from("paste-bytes").toString("hex")}`;
+  fetchMock(() => okResponse("bridge answer"));
+  const result = await ctx.state.tool.execute({ attachment_id: attachmentId }, { signal: undefined });
+  assert.equal(result.text, "bridge answer");
+  assert.match(JSON.parse(fetchMock.last.init.body).messages[0].content[0].image_url.url, /^data:image\/png;base64,/);
+});
+
+test("composer-image bridge preserves content order when the image comes first", async () => {
+  const rawImage = {
+    type: "image",
+    mediaType: "image/png",
+    data: Buffer.from("paste-bytes").toString("base64"),
+  };
+  const lastRequest = {};
+  const sessions = {
+    async models() {
+      return { result: { ok: true, value: { current: { provider: "deepseek", model: "deepseek-chat" } } } };
+    },
+    async prompt(request) {
+      lastRequest.request = request;
+      return { result: { ok: true, value: { accepted: true } } };
+    },
+  };
+  const ctx = fakeCtx({ apiProxy: { sessions }, llmInfo: { inputModalities: ["text"] } });
+  apply(ctx, {});
+
+  await sessions.prompt({
+    payload: { sessionId: "s1", mode: "queue", content: [rawImage, { type: "text", text: "后一句" }] },
+  });
+
+  const delivered = lastRequest.request.payload.content;
+  assert.equal(delivered.length, 2);
+  assert.equal(delivered[0].type, "text");
+  assert.match(delivered[0].text, /粘贴了一张图片/);
+  assert.equal(delivered[1].type, "text");
+  assert.equal(delivered[1].text, "后一句");
+});
+
+test("composer-image bridge leaves raw images alone for vision-capable models", async () => {
+  const rawImage = {
+    type: "image",
+    mediaType: "image/png",
+    data: Buffer.from("paste-bytes").toString("base64"),
+  };
+  const lastRequest = {};
+  const sessions = {
+    async models() {
+      return { result: { ok: true, value: { current: { provider: "deepseek", model: "vision-pro" } } } };
+    },
+    async prompt(request) {
+      lastRequest.request = request;
+      return { result: { ok: true, value: { accepted: true } } };
+    },
+  };
+  const ctx = fakeCtx({ apiProxy: { sessions }, llmInfo: { inputModalities: ["text", "image"] } });
+  apply(ctx, {});
+
+  await sessions.prompt({ payload: { sessionId: "s1", mode: "queue", content: [rawImage] } });
+  assert.equal(lastRequest.request.payload.content[0], rawImage);
+});
+
+test("composer-image bridge falls back to the host path when attachment save fails", async () => {
+  const rawImage = {
+    type: "image",
+    mediaType: "image/png",
+    data: Buffer.from("paste-bytes").toString("base64"),
+  };
+  const lastRequest = {};
+  const sessions = {
+    async models() {
+      return { result: { ok: true, value: { current: { provider: "deepseek", model: "deepseek-chat" } } } };
+    },
+    async prompt(request) {
+      lastRequest.request = request;
+      return { result: { ok: true, value: { accepted: true } } };
+    },
+  };
+  const ctx = fakeCtx({ apiProxy: { sessions }, llmInfo: { inputModalities: ["text"] } });
+  ctx.attachments.validateImage = async () => {
+    throw new Error("storage offline");
+  };
+  apply(ctx, {});
+
+  await sessions.prompt({ payload: { sessionId: "s1", mode: "queue", content: [rawImage] } });
+  // The wrapper caught the storage failure and left the original content alone
+  // so the host's own validation/error path can handle it.
+  assert.equal(lastRequest.request.payload.content[0], rawImage);
 });
 
 test("execute falls back to plain fs resolution when the host has no fs seam", async () => {

@@ -16,6 +16,10 @@ _Avoid_: file image
 The harness's fail-closed host check that refuses image content when the routed model does not declare image input.
 _Avoid_: route gate, modality check
 
+**Composer-image bridge**:
+The plugin's runtime wrapper around `apiProxy.sessions.prompt` that persists pasted images and rewrites them into text notes carrying the attachment id for text-only models.
+_Avoid_: inbound transform, prompt seam wrapper
+
 **Vision endpoint**:
 An OpenAI-compatible multimodal API identified by a baseURL, a model id, and an apiKey.
 _Avoid_: VLM backend, OCR service
