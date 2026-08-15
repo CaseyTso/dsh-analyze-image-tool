@@ -76,7 +76,12 @@ Prefer the WebUI panel (recommended), or configure in profile's `cordis.patch.ym
 
 ## WebUI Settings Panel
 
-Small eye icon (analyze-image-tool) at top-right of web session header. Click to:
+Two entry points:
+
+- **Session header eye icon** (analyze-image-tool) at top-right of web session header.
+- **System settings tab**: web settings modal → Plugins (插件) → 识图插件 — the same panel embedded as a settings tab.
+
+Click to:
 
 - Edit `baseURL` / `apiKey` / `model` / `maxTokens` / `timeoutMs` / `maxImageBytes`
 - Edit `defaultQuestion`（default query when model calls `analyze_image` without `prompt`）

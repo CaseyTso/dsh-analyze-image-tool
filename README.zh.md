@@ -76,7 +76,12 @@ dsh --profile web
 
 ## WebUI 设置面板
 
-web 会话头部右上角有一个小眼睛按钮（`analyze-image-tool`）。点开后可以：
+两个入口：
+
+- **会话头部小眼睛按钮**：web 会话头部右上角的 `analyze-image-tool` 按钮。
+- **系统设置页签**：web 设置弹窗 → 插件 → 识图插件，同一个面板以内嵌页签形式提供。
+
+打开后可以：
 
 - 编辑 `baseURL` / `apiKey` / `model` / `maxTokens` / `timeoutMs` / `maxImageBytes`
 - 编辑 `defaultQuestion`（模型调用 `analyze_image` 未带 `prompt` 时的默认提问）
