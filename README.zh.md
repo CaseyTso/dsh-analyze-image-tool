@@ -56,13 +56,13 @@ dsh --profile web
 
 ### 端点示例（都是同一套配置，任选）
 
-|| 场景 | baseURL | model 示例 | 说明 |
+| 场景 | baseURL | model 示例 | 说明 |
 |---|---|---|---|
-|| SiliconFlow（默认） | `https://api.siliconflow.cn/v1` | `Qwen/Qwen3-VL-32B-Instruct` | 需 key，视觉能力强 |
-|| 阿里百炼 DashScope | `https://dashscope.aliyuncs.com/compatible-mode/v1` | `qwen3-vl-flash` | 兼容模式，性价比高 |
-|| 智谱 | `https://open.bigmodel.cn/api/paas/v4` | `glm-4.6v-flash` | 有免费档 |
-|| OpenRouter | `https://openrouter.ai/api/v1` | `google/gemini-2.5-flash` | 多模型聚合 |
-|| Ollama 本地 | `http://localhost:11434/v1` | `qwen3-vl:4b` | 无需 key，完全离线 |
+| SiliconFlow（默认） | `https://api.siliconflow.cn/v1` | `Qwen/Qwen3-VL-32B-Instruct` | 需 key，视觉能力强 |
+| 阿里百炼 DashScope | `https://dashscope.aliyuncs.com/compatible-mode/v1` | `qwen3-vl-flash` | 兼容模式，性价比高 |
+| 智谱 | `https://open.bigmodel.cn/api/paas/v4` | `glm-4.6v-flash` | 有免费档 |
+| OpenRouter | `https://openrouter.ai/api/v1` | `google/gemini-2.5-flash` | 多模型聚合 |
+| Ollama 本地 | `http://localhost:11434/v1` | `qwen3-vl:4b` | 无需 key，完全离线 |
 
 ### API key 解析链（按顺序）
 
