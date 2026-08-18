@@ -79,7 +79,7 @@ Prefer the WebUI panel (recommended), or configure in profile's `cordis.patch.ym
 Two entry points:
 
 - **Session header eye icon** (analyze-image-tool) at top-right of web session header.
-- **System settings tab**: web settings modal → Plugins (插件) → 识图插件 — the same panel embedded as a settings tab.
+- **System settings card (dsh ≥ 0.1.0-rc.7)**: web settings modal → Plugins → Plugin configuration → the `analyze-image-tool` card — the same panel, expandable like the built-in plugin cards.
 
 Click to:
 

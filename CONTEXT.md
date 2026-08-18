@@ -21,7 +21,7 @@ The plugin's runtime wrapper around `apiProxy.sessions.prompt` that persists pas
 _Avoid_: inbound transform, prompt seam wrapper
 
 **Settings panel**:
-The panel that edits the plugin's vision-endpoint and prompt settings and runs the connectivity test; rendered both as the session-header dock popup and as a tab in the web system settings modal.
+The panel that edits the plugin's vision-endpoint and prompt settings and runs the connectivity test; rendered both as the session-header dock popup and as a card in the web system settings modal's Plugins → Plugin configuration slot.
 _Avoid_: settings page, config dialog
 
 **Composer note template**:

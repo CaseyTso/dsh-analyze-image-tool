@@ -79,7 +79,7 @@ dsh --profile web
 两个入口：
 
 - **会话头部小眼睛按钮**：web 会话头部右上角的 `analyze-image-tool` 按钮。
-- **系统设置页签**：web 设置弹窗 → 插件 → 识图插件，同一个面板以内嵌页签形式提供。
+- **系统设置卡片（dsh ≥ 0.1.0-rc.7）**：web 设置弹窗 → Plugins → Plugin configuration → 点击展开 `analyze-image-tool` 卡片，和内置插件卡片一致。
 
 打开后可以：
 

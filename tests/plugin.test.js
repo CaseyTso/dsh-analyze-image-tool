@@ -95,8 +95,17 @@ function fakeCtx({
   llmInfo = undefined,
   settings = undefined,
   webServer = undefined,
+  deferredServices = [],
 } = {}) {
-  const state = { tool: null, promptSection: null, effects: [], fsCalls: [], listeners: {} };
+  const state = {
+    tool: null,
+    promptSection: null,
+    effects: [],
+    fsCalls: [],
+    listeners: {},
+    deferredInjections: [],
+  };
+  const deferred = new Set(deferredServices);
   const services = {
     apiProxy,
     llm:
@@ -106,16 +115,37 @@ function fakeCtx({
     settings,
     webServer,
   };
+  const runDeferredInjections = () => {
+    const ready = state.deferredInjections.filter(({ names }) =>
+      names.every((name) => services[name] !== undefined),
+    );
+    state.deferredInjections = state.deferredInjections.filter(
+      (entry) => !ready.includes(entry),
+    );
+    for (const { names, callback } of ready) {
+      const child = { ...ctx };
+      for (const name of names) child[name] = services[name];
+      callback(child);
+    }
+  };
   const ctx = {
     state,
     get(name) {
       return services[name];
     },
     inject(names, callback) {
+      if (names.some((name) => deferred.has(name))) {
+        state.deferredInjections.push({ names, callback });
+        return;
+      }
       if (names.some((name) => services[name] === undefined)) return;
       const child = { ...ctx };
       for (const name of names) child[name] = services[name];
       callback(child);
+    },
+    provideService(name, value) {
+      services[name] = value;
+      runDeferredInjections();
     },
     effect(fn, label) {
       state.effects.push(label);
@@ -465,6 +495,47 @@ test("composer-image bridge rewrites raw pasted images for text-only models", as
   const result = await ctx.state.tool.execute({ attachment_id: attachmentId }, { signal: undefined });
   assert.equal(result.text, "bridge answer");
   assert.match(JSON.parse(fetchMock.last.init.body).messages[0].content[0].image_url.url, /^data:image\/png;base64,/);
+});
+
+
+test("composer-image bridge installs when apiProxy arrives after plugin apply (rc7 order)", async () => {
+  const rawImage = {
+    type: "image",
+    mediaType: "image/png",
+    data: Buffer.from("late-paste").toString("base64"),
+  };
+  const lastRequest = {};
+  const sessions = {
+    async models() {
+      return { result: { ok: true, value: { current: { provider: "deepseek", model: "deepseek-chat" } } } };
+    },
+    async prompt(request) {
+      lastRequest.request = request;
+      return { result: { ok: true, value: { accepted: true } } };
+    },
+  };
+  const originalPrompt = sessions.prompt;
+  const ctx = fakeCtx({
+    llmInfo: { inputModalities: ["text"] },
+    deferredServices: ["apiProxy"],
+  });
+  apply(ctx, { apiKey: "sk-x" });
+
+  assert.equal(sessions.prompt, originalPrompt, "apiProxy is absent during apply, nothing to wrap yet");
+  ctx.provideService("apiProxy", { sessions });
+  assert.notEqual(sessions.prompt, originalPrompt, "bridge must install once apiProxy is provided");
+
+  await sessions.prompt({
+    payload: {
+      sessionId: "s1",
+      mode: "queue",
+      content: [{ type: "text", text: "看看这张图" }, rawImage],
+    },
+  });
+  const delivered = lastRequest.request.payload.content;
+  assert.equal(delivered.length, 2);
+  assert.equal(delivered[1].type, "text");
+  assert.match(delivered[1].text, /sha256:/);
 });
 
 test("composer-image bridge preserves content order when the image comes first", async () => {
